@@ -1,4 +1,5 @@
-# HiHo Worker - GCP Terraform Variables (DEV)
+# HiHo Worker - GCP Terraform Variables
+# Registry URL is set via terraform.tfvars (injected by deployment workflow)
 
 variable "project_id" {
   description = "GCP Project ID where resources will be created"
@@ -35,9 +36,8 @@ variable "machine_type" {
 }
 
 variable "registry_url" {
-  description = "Container registry URL"
+  description = "Container registry URL (set via terraform.tfvars)"
   type        = string
-  default     = "git.hihoworks.com/data-connector/hiho-worker-dev"
 }
 
 variable "image_tag" {

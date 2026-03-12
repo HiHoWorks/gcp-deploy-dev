@@ -102,12 +102,13 @@ locals {
     log "Creating directories..."
     mkdir -p /opt/hiho/{models,config,checkpoints,bin,credentials}
 
-    # Write service account key from metadata
+    # Write service account key from metadata (double base64 decode - GCP encodes it, then we encode for metadata)
     log "Writing service account credentials..."
     curl -s -H "Metadata-Flavor: Google" \
       "http://metadata.google.internal/computeMetadata/v1/instance/attributes/sa-key" \
-      | base64 -d > /opt/hiho/credentials/key.json
-    chmod 600 /opt/hiho/credentials/key.json
+      | base64 -d | base64 -d > /opt/hiho/credentials/key.json
+    chmod 644 /opt/hiho/credentials/key.json
+    chown 1000:1000 /opt/hiho/credentials/key.json
 
     # Get configuration from metadata
     API_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
