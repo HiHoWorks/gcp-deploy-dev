@@ -123,13 +123,14 @@ locals {
     # Write environment file
     log "Writing environment configuration..."
     cat > /opt/hiho/.env <<ENVEOF
-    API_TOKEN=$API_TOKEN
-    REGISTRY_URL=$REGISTRY_URL
-    IMAGE_TAG=$IMAGE_TAG
-    PROVIDER=google
-    GOOGLE_APPLICATION_CREDENTIALS=/credentials/key.json
-    GOOGLE_ADMIN_EMAIL=$ADMIN_EMAIL
-    ENVEOF
+API_TOKEN=$API_TOKEN
+REGISTRY_URL=$REGISTRY_URL
+IMAGE_TAG=$IMAGE_TAG
+PROVIDER=google
+GOOGLE_APPLICATION_CREDENTIALS=/credentials/key.json
+GOOGLE_ADMIN_EMAIL=$ADMIN_EMAIL
+PROCESS_TEAMS=false
+ENVEOF
     chmod 600 /opt/hiho/.env
 
     # Write docker-compose.yml
