@@ -1,0 +1,227 @@
+# HiHo Worker - GCP Terraform Configuration
+#
+# This Terraform configuration creates:
+# - Service account with domain-wide delegation capability
+# - Compute Engine VM running the HiHo Worker container
+# - Firewall rules for health checks
+# - Required IAM bindings
+#
+# After deployment, you must manually configure Domain-Wide Delegation
+# in the Google Admin Console. See outputs for instructions.
+
+terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+# Enable required APIs
+resource "google_project_service" "apis" {
+  for_each = toset([
+    "cloudresourcemanager.googleapis.com",
+    "compute.googleapis.com",
+    "iam.googleapis.com",
+    "admin.googleapis.com",
+    "gmail.googleapis.com",
+    "calendar-json.googleapis.com",
+  ])
+
+  service            = each.value
+  disable_on_destroy = false
+}
+
+# Service account for the worker
+resource "google_service_account" "hiho_worker" {
+  account_id   = "hiho-worker"
+  display_name = "HiHo Worker Service Account"
+  description  = "Service account for HiHo sentiment analysis worker with domain-wide delegation"
+
+  depends_on = [google_project_service.apis]
+}
+
+# Create service account key (stored in VM metadata)
+resource "google_service_account_key" "hiho_worker" {
+  service_account_id = google_service_account.hiho_worker.name
+}
+
+# VPC network (use default or create dedicated)
+data "google_compute_network" "default" {
+  name = "default"
+  depends_on = [google_project_service.apis]
+}
+
+# Firewall rule for health checks
+resource "google_compute_firewall" "hiho_health_check" {
+  name    = "hiho-worker-health-check"
+  network = data.google_compute_network.default.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["8080"]
+  }
+
+  # Google Cloud health check ranges
+  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
+  target_tags   = ["hiho-worker"]
+
+  depends_on = [google_project_service.apis]
+}
+
+# Startup script for VM
+locals {
+  startup_script = <<-EOF
+    #!/bin/bash
+    set -e
+
+    LOG_FILE="/var/log/hiho-install.log"
+    log() {
+      echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] $1" | tee -a "$LOG_FILE"
+    }
+
+    log "Starting HiHo Worker installation..."
+
+    # Install Docker
+    log "Installing Docker..."
+    apt-get update
+    apt-get install -y apt-transport-https ca-certificates curl gnupg
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+    # Create directories
+    log "Creating directories..."
+    mkdir -p /opt/hiho/{models,config,checkpoints,bin,credentials}
+
+    # Write service account key from metadata
+    log "Writing service account credentials..."
+    curl -s -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/attributes/sa-key" \
+      | base64 -d > /opt/hiho/credentials/key.json
+    chmod 600 /opt/hiho/credentials/key.json
+
+    # Get configuration from metadata
+    API_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/attributes/api-token")
+    ADMIN_EMAIL=$(curl -s -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/attributes/admin-email")
+    REGISTRY_URL=$(curl -s -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/attributes/registry-url")
+    IMAGE_TAG=$(curl -s -H "Metadata-Flavor: Google" \
+      "http://metadata.google.internal/computeMetadata/v1/instance/attributes/image-tag")
+
+    # Write environment file
+    log "Writing environment configuration..."
+    cat > /opt/hiho/.env <<ENVEOF
+    API_TOKEN=$API_TOKEN
+    REGISTRY_URL=$REGISTRY_URL
+    IMAGE_TAG=$IMAGE_TAG
+    PROVIDER=google
+    GOOGLE_APPLICATION_CREDENTIALS=/credentials/key.json
+    GOOGLE_ADMIN_EMAIL=$ADMIN_EMAIL
+    ENVEOF
+    chmod 600 /opt/hiho/.env
+
+    # Write docker-compose.yml
+    log "Writing docker-compose.yml..."
+    cat > /opt/hiho/docker-compose.yml <<'COMPOSEEOF'
+    services:
+      hiho-worker:
+        image: $${REGISTRY_URL}:$${IMAGE_TAG:-latest}
+        container_name: hiho-worker
+        restart: unless-stopped
+        env_file:
+          - .env
+        environment:
+          - PROVIDER=google
+          - GOOGLE_APPLICATION_CREDENTIALS=/credentials/key.json
+          - GOOGLE_ADMIN_EMAIL
+        volumes:
+          - ./models:/models
+          - ./config:/opt/hiho_worker
+          - ./checkpoints:/opt/hiho_worker/checkpoints
+          - ./bin:/host-bin
+          - ./credentials:/credentials:ro
+        ports:
+          - "8080:8080"
+        deploy:
+          resources:
+            limits:
+              memory: 2G
+            reservations:
+              memory: 512M
+        logging:
+          driver: "json-file"
+          options:
+            max-size: "50m"
+            max-file: "5"
+        security_opt:
+          - no-new-privileges:true
+    COMPOSEEOF
+
+    # Set ownership
+    chown -R 1000:1000 /opt/hiho/{models,config,checkpoints,bin}
+
+    # Start container
+    log "Starting HiHo Worker container..."
+    cd /opt/hiho
+    docker compose pull
+    docker compose up -d
+
+    log "Installation complete!"
+    echo "installed" > /opt/hiho/.installed
+  EOF
+}
+
+# Compute Engine VM
+resource "google_compute_instance" "hiho_worker" {
+  name         = "hiho-worker"
+  machine_type = var.machine_type
+  zone         = var.zone
+
+  tags = ["hiho-worker"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-12"
+      size  = 20
+      type  = "pd-balanced"
+    }
+  }
+
+  network_interface {
+    network = data.google_compute_network.default.name
+    access_config {
+      # Ephemeral public IP
+    }
+  }
+
+  metadata = {
+    "sa-key"       = base64encode(google_service_account_key.hiho_worker.private_key)
+    "api-token"    = var.api_token
+    "admin-email"  = var.admin_email
+    "registry-url" = var.registry_url
+    "image-tag"    = var.image_tag
+  }
+
+  metadata_startup_script = local.startup_script
+
+  service_account {
+    email  = google_service_account.hiho_worker.email
+    scopes = ["cloud-platform"]
+  }
+
+  depends_on = [
+    google_project_service.apis,
+    google_service_account_key.hiho_worker,
+  ]
+}
