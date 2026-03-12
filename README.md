@@ -1,4 +1,4 @@
-# HiHo Worker - Google Cloud Deployment
+# HiHo Worker - Google Cloud Deployment (Dev)
 
 This Terraform configuration deploys the HiHo sentiment analysis worker to Google Cloud Platform.
 
@@ -12,7 +12,7 @@ This Terraform configuration deploys the HiHo sentiment analysis worker to Googl
 
 1. Click this button to open in Cloud Shell:
 
-   [![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/HiHoWorks/gcp-deploy&cloudshell_tutorial=README.md)
+   [![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/HiHoWorks/gcp-deploy-dev&cloudshell_tutorial=README.md)
 
 2. Run the deployment script:
 
