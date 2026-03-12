@@ -172,6 +172,46 @@ locals {
     # Set ownership
     chown -R 1000:1000 /opt/hiho/{models,config,checkpoints,bin}
 
+    # Set up updater symlink (updater binary comes from Docker image)
+    log "Setting up updater..."
+    ln -sf /opt/hiho/bin/hiho-updater /usr/local/bin/hiho-updater
+
+    # Create systemd service for updater
+    log "Creating systemd services..."
+    cat > /etc/systemd/system/hiho-updater.service <<'SERVICEEOF'
+[Unit]
+Description=HiHo Worker Updater
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/hiho
+ExecStart=/usr/local/bin/hiho-updater --check-and-update
+Environment="INSTALL_DIR=/opt/hiho"
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+
+    cat > /etc/systemd/system/hiho-updater.timer <<'TIMEREOF'
+[Unit]
+Description=HiHo Worker Nightly Update Check
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+TIMEREOF
+
+    systemctl daemon-reload
+    systemctl enable hiho-updater.timer
+    systemctl start hiho-updater.timer
+
     # Start container
     log "Starting HiHo Worker container..."
     cd /opt/hiho
