@@ -136,39 +136,39 @@ ENVEOF
     # Write docker-compose.yml
     log "Writing docker-compose.yml..."
     cat > /opt/hiho/docker-compose.yml <<'COMPOSEEOF'
-    services:
-      hiho-worker:
-        image: $${REGISTRY_URL}:$${IMAGE_TAG:-latest}
-        container_name: hiho-worker
-        restart: unless-stopped
-        env_file:
-          - .env
-        environment:
-          - PROVIDER=google
-          - GOOGLE_APPLICATION_CREDENTIALS=/credentials/key.json
-          - GOOGLE_ADMIN_EMAIL
-        volumes:
-          - ./models:/models
-          - ./config:/opt/hiho_worker
-          - ./checkpoints:/opt/hiho_worker/checkpoints
-          - ./bin:/host-bin
-          - ./credentials:/credentials:ro
-        ports:
-          - "8080:8080"
-        deploy:
-          resources:
-            limits:
-              memory: 2G
-            reservations:
-              memory: 512M
-        logging:
-          driver: "json-file"
-          options:
-            max-size: "50m"
-            max-file: "5"
-        security_opt:
-          - no-new-privileges:true
-    COMPOSEEOF
+services:
+  hiho-worker:
+    image: $${REGISTRY_URL}:$${IMAGE_TAG:-latest}
+    container_name: hiho-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PROVIDER=google
+      - GOOGLE_APPLICATION_CREDENTIALS=/credentials/key.json
+      - GOOGLE_ADMIN_EMAIL
+    volumes:
+      - ./models:/models
+      - ./config:/opt/hiho_worker
+      - ./checkpoints:/opt/hiho_worker/checkpoints
+      - ./bin:/host-bin
+      - ./credentials:/credentials:ro
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    security_opt:
+      - no-new-privileges:true
+COMPOSEEOF
 
     # Set ownership
     chown -R 1000:1000 /opt/hiho/{models,config,checkpoints,bin}
