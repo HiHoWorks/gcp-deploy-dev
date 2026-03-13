@@ -1,10 +1,5 @@
 # HiHo Worker - GCP Terraform Outputs
 
-output "vm_external_ip" {
-  description = "External IP address of the HiHo Worker VM"
-  value       = google_compute_instance.hiho_worker.network_interface[0].access_config[0].nat_ip
-}
-
 output "vm_internal_ip" {
   description = "Internal IP address of the HiHo Worker VM"
   value       = google_compute_instance.hiho_worker.network_interface[0].network_ip
@@ -25,6 +20,11 @@ output "delegation_scopes" {
   value       = <<-EOT
     https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.customer.readonly
   EOT
+}
+
+output "ssh_command" {
+  description = "Command to SSH into the VM via IAP"
+  value       = "gcloud compute ssh hiho-worker --zone=${var.zone} --tunnel-through-iap"
 }
 
 output "next_steps" {
@@ -54,7 +54,8 @@ output "next_steps" {
     The HiHo Worker will start processing emails and calendar
     events within a few minutes of completing this step.
 
-    Health check URL: http://${google_compute_instance.hiho_worker.network_interface[0].access_config[0].nat_ip}:8080/health
+    To SSH into the VM:
+    gcloud compute ssh hiho-worker --zone=${var.zone} --tunnel-through-iap
 
     ============================================================
   EOT
