@@ -1,10 +1,11 @@
 # HiHo Worker - GCP Terraform Configuration
 #
 # This Terraform configuration creates:
+# - Dedicated VPC with no inbound internet access
+# - Cloud NAT for outbound-only internet access
 # - Service account with domain-wide delegation capability
-# - Compute Engine VM running the HiHo Worker container
-# - Firewall rules for health checks
-# - Required IAM bindings
+# - Compute Engine VM running the HiHo Worker container (private IP only)
+# - IAP SSH access for troubleshooting
 #
 # After deployment, you must manually configure Domain-Wide Delegation
 # in the Google Admin Console. See outputs for instructions.
@@ -53,27 +54,88 @@ resource "google_service_account_key" "hiho_worker" {
   service_account_id = google_service_account.hiho_worker.name
 }
 
-# VPC network (use default or create dedicated)
-data "google_compute_network" "default" {
-  name = "default"
+# Dedicated VPC network for HiHo Worker (no default firewall rules)
+resource "google_compute_network" "hiho" {
+  name                    = "hiho-worker-vpc"
+  auto_create_subnetworks = false
+
   depends_on = [google_project_service.apis]
 }
 
-# Firewall rule for health checks
-resource "google_compute_firewall" "hiho_health_check" {
-  name    = "hiho-worker-health-check"
-  network = data.google_compute_network.default.name
+# Subnet for the worker VM
+resource "google_compute_subnetwork" "hiho" {
+  name          = "hiho-worker-subnet"
+  ip_cidr_range = "10.0.0.0/24"
+  region        = var.region
+  network       = google_compute_network.hiho.id
+
+  # Enable Private Google Access for API calls without public IP
+  private_ip_google_access = true
+}
+
+# Cloud Router for NAT
+resource "google_compute_router" "hiho" {
+  name    = "hiho-worker-router"
+  region  = var.region
+  network = google_compute_network.hiho.id
+}
+
+# Cloud NAT for outbound internet access (no inbound)
+resource "google_compute_router_nat" "hiho" {
+  name                               = "hiho-worker-nat"
+  router                             = google_compute_router.hiho.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
+}
+
+# Allow outbound traffic (egress is allowed by default, but being explicit)
+resource "google_compute_firewall" "hiho_egress" {
+  name      = "hiho-worker-allow-egress"
+  network   = google_compute_network.hiho.name
+  direction = "EGRESS"
+
+  allow {
+    protocol = "all"
+  }
+
+  destination_ranges = ["0.0.0.0/0"]
+}
+
+# Deny all ingress by default (explicit deny-all rule)
+resource "google_compute_firewall" "hiho_deny_ingress" {
+  name      = "hiho-worker-deny-ingress"
+  network   = google_compute_network.hiho.name
+  direction = "INGRESS"
+  priority  = 65534
+
+  deny {
+    protocol = "all"
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+}
+
+# Allow IAP for SSH access (optional, for troubleshooting)
+resource "google_compute_firewall" "hiho_iap_ssh" {
+  name      = "hiho-worker-allow-iap-ssh"
+  network   = google_compute_network.hiho.name
+  direction = "INGRESS"
+  priority  = 1000
 
   allow {
     protocol = "tcp"
-    ports    = ["8080"]
+    ports    = ["22"]
   }
 
-  # Google Cloud health check ranges
-  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
+  # IAP's IP range
+  source_ranges = ["35.235.240.0/20"]
   target_tags   = ["hiho-worker"]
-
-  depends_on = [google_project_service.apis]
 }
 
 # Startup script for VM
@@ -241,10 +303,9 @@ resource "google_compute_instance" "hiho_worker" {
   }
 
   network_interface {
-    network = data.google_compute_network.default.name
-    access_config {
-      # Ephemeral public IP
-    }
+    network    = google_compute_network.hiho.name
+    subnetwork = google_compute_subnetwork.hiho.name
+    # No access_config = no public IP, outbound via Cloud NAT
   }
 
   metadata = {
@@ -265,5 +326,6 @@ resource "google_compute_instance" "hiho_worker" {
   depends_on = [
     google_project_service.apis,
     google_service_account_key.hiho_worker,
+    google_compute_router_nat.hiho,
   ]
 }
